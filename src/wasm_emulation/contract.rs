@@ -38,6 +38,8 @@ use super::input::SudoArgs;
 use super::input::WasmFunction;
 use super::output::WasmOutput;
 use super::query::mock_querier::ForkState;
+use std::env::var;
+use std::fs;
 
 fn apply_storage_changes<ExecC>(storage: &mut dyn Storage, output: &WasmRunnerOutput<ExecC>) {
     // We change all the values with the output
@@ -91,6 +93,38 @@ impl std::fmt::Debug for LocalWasmContract {
     }
 }
 
+fn cache_reponse<F: Fn() -> AnyResult<Vec<u8>>>(key: String, cb: F) -> AnyResult<Vec<u8>> {
+    let wasm_cache_enabled = var("WASM_CACHE").map(|e| e == "true").unwrap_or(true);
+    let cargo_target_dir = var("CARGO_TARGET_DIR").expect("CARGO_TARGET_DIR must be defined");
+    let wasm_cache_dir = format!("{}/wasm_cache", cargo_target_dir);
+
+    if !wasm_cache_enabled {
+        let code = cb()?;
+        return Ok(code);
+    }
+
+    match fs::metadata(&wasm_cache_dir) {
+        Ok(d) => assert!(d.is_dir(), "it must be a directory"),
+        Err(_) => fs::create_dir(&wasm_cache_dir)
+            .expect("wasm_cache cant be created, please check permissions."),
+    }
+
+    let cached_response_file = format!("{}/{}", wasm_cache_dir, key);
+
+    match fs::metadata(&cached_response_file) {
+        Ok(cache) => {
+            assert!(cache.is_file(), "it must be a file");
+            Ok(fs::read(&cached_response_file).expect("the file cant be read"))
+        }
+        Err(_) => {
+            let wasm = cb()?;
+
+            fs::write(&cached_response_file, &wasm).expect("it must write the cache");
+            Ok(wasm)
+        }
+    }
+}
+
 impl WasmContract {
     pub fn new_local(code: Vec<u8>) -> Self {
         check_wasm(
@@ -129,10 +163,20 @@ impl WasmContract {
                     .remote
                     .rt
                     .block_on(wasm_querier._contract_info(contract_addr))?;
-                let code = fork_state
-                    .remote
-                    .rt
-                    .block_on(wasm_querier._code_data(code_info.code_id))?;
+
+                let cache_key = format!(
+                    "{}:{}",
+                    fork_state.remote.pub_address_prefix, code_info.code_id
+                );
+
+                let code = cache_reponse(cache_key, || {
+                    fork_state
+                        .remote
+                        .rt
+                        .block_on(wasm_querier._code_data(code_info.code_id))
+                        .map_err(|e| e.into())
+                })?;
+
                 Ok(code)
             }
             WasmContract::DistantCodeId(DistantCodeId { code_id }) => {
@@ -141,10 +185,16 @@ impl WasmContract {
                     rt_handle: Some(fork_state.remote.rt.clone()),
                 };
 
-                let code = fork_state
-                    .remote
-                    .rt
-                    .block_on(wasm_querier._code_data(*code_id))?;
+                let cache_key = format!("{}:{}", fork_state.remote.pub_address_prefix, &code_id);
+
+                let code = cache_reponse(cache_key, || {
+                    fork_state
+                        .remote
+                        .rt
+                        .block_on(wasm_querier._code_data(*code_id))
+                        .map_err(|e| e.into())
+                })?;
+
                 Ok(code)
             }
         }
