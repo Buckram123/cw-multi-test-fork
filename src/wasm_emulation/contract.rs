@@ -444,7 +444,12 @@ pub fn execute_function<
 mod wasm_caching {
     use super::*;
 
-    use std::{env, fs, io::Read, os::unix::fs::FileExt, path::PathBuf};
+    use std::{
+        env, fs,
+        io::{Read, Seek},
+        os::unix::fs::FileExt,
+        path::PathBuf,
+    };
 
     use anyhow::{bail, Context};
 
@@ -571,6 +576,7 @@ mod wasm_caching {
                 match status {
                     WasmCachingStatus::Ready => {
                         let mut buf = vec![];
+                        file.seek(std::io::SeekFrom::Start(1))?;
                         file.read_to_end(&mut buf)
                             .context("unable to open wasm cache file")?;
                         dbg!(&buf[0]);
