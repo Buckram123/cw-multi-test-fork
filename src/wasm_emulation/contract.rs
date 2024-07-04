@@ -444,7 +444,7 @@ pub fn execute_function<
 mod wasm_caching {
     use super::*;
 
-    use std::{env, fs, path::PathBuf};
+    use std::{env, fs, io::Write, path::PathBuf};
 
     use anyhow::{bail, Context};
 
@@ -495,7 +495,6 @@ mod wasm_caching {
 
         let wasm_cache_dir = cargo_target_dir().join(WASM_CACHE_DIR);
         // Prepare cache directory in `./target/`
-        // TODO: does those checks and error messages help in any way? Won't default fs errors return same information?
         match fs::metadata(&wasm_cache_dir) {
             // Verify it's dir
             Ok(wasm_cache_metadata) => {
@@ -511,17 +510,21 @@ mod wasm_caching {
         let cached_wasm_file = wasm_cache_dir.join(format!("{key}.wasm"));
         let wasm_bytes = match fs::metadata(&cached_wasm_file) {
             // Cache file exists, just read it
-            Ok(_) => {
-                // TODO: do we need this check?
-                // assert!(wasm_file_metadata.is_file(), "it must be a file");
-                fs::read(&cached_wasm_file).context("unable to read wasm cache file")?
-            }
-            // Error on checking cache dir, download it and try to store it
+            Ok(_) => fs::read(&cached_wasm_file).context("unable to read wasm cache file")?,
+            // Error on checking cache dir, get wasm bytes and try to cache it
             Err(_) => {
                 let wasm = wasm_code_bytes()?;
 
-                // TODO: Not critical, should we just log the write failure?
-                fs::write(&cached_wasm_file, &wasm).context("unable to write wasm cache file")?;
+                // Save cache
+                // File is locked until content written to it
+                let options = file_lock::FileOptions::new().create(true).write(true);
+                if let Err(cache_save_err) =
+                    file_lock::FileLock::lock(&cached_wasm_file, false, options)
+                        .and_then(|mut file_lock| file_lock.file.write_all(&wasm))
+                {
+                    // It's not critical if it fails, as we already have wasm bytes, so we just log it
+                    log::error!(target: "wasm_caching", "Failed to save wasm cache: {cache_save_err}")
+                }
                 wasm
             }
         };

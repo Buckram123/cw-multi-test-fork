@@ -61,8 +61,9 @@ wasmer = { version = "=4.2.2", default-features = false, features = [
     "singlepass",
 ] }
 
-# For finding Cargo target dir
-cargo_metadata = "0.18"
+# Caching
+cargo_metadata = "0.18" # For finding Cargo target dir
+file-lock = "2.1"
 
 [dev-dependencies]
 hex = "0.4.3"
