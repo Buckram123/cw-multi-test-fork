@@ -579,7 +579,6 @@ mod wasm_caching {
                         file.seek(std::io::SeekFrom::Start(1))?;
                         file.read_to_end(&mut buf)
                             .context("unable to open wasm cache file")?;
-                        dbg!(&buf[0]);
                         buf
                     }
                     // Ready for read
