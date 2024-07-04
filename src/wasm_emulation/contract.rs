@@ -38,8 +38,6 @@ use super::input::SudoArgs;
 use super::input::WasmFunction;
 use super::output::WasmOutput;
 use super::query::mock_querier::ForkState;
-use std::env::var;
-use std::fs;
 
 fn apply_storage_changes<ExecC>(storage: &mut dyn Storage, output: &WasmRunnerOutput<ExecC>) {
     // We change all the values with the output
@@ -93,38 +91,6 @@ impl std::fmt::Debug for LocalWasmContract {
     }
 }
 
-fn cache_reponse<F: Fn() -> AnyResult<Vec<u8>>>(key: String, cb: F) -> AnyResult<Vec<u8>> {
-    let wasm_cache_enabled = var("WASM_CACHE").map(|e| e == "true").unwrap_or(true);
-    let cargo_target_dir = var("CARGO_TARGET_DIR").expect("CARGO_TARGET_DIR must be defined");
-    let wasm_cache_dir = format!("{}/wasm_cache", cargo_target_dir);
-
-    if !wasm_cache_enabled {
-        let code = cb()?;
-        return Ok(code);
-    }
-
-    match fs::metadata(&wasm_cache_dir) {
-        Ok(d) => assert!(d.is_dir(), "it must be a directory"),
-        Err(_) => fs::create_dir(&wasm_cache_dir)
-            .expect("wasm_cache cant be created, please check permissions."),
-    }
-
-    let cached_response_file = format!("{}/{}", wasm_cache_dir, key);
-
-    match fs::metadata(&cached_response_file) {
-        Ok(cache) => {
-            assert!(cache.is_file(), "it must be a file");
-            Ok(fs::read(&cached_response_file).expect("the file cant be read"))
-        }
-        Err(_) => {
-            let wasm = cb()?;
-
-            fs::write(&cached_response_file, &wasm).expect("it must write the cache");
-            Ok(wasm)
-        }
-    }
-}
-
 impl WasmContract {
     pub fn new_local(code: Vec<u8>) -> Self {
         check_wasm(
@@ -164,17 +130,14 @@ impl WasmContract {
                     .rt
                     .block_on(wasm_querier._contract_info(contract_addr))?;
 
-                let cache_key = format!(
-                    "{}:{}",
-                    fork_state.remote.pub_address_prefix, code_info.code_id
-                );
+                let cache_key = format!("{}:{}", fork_state.remote.chain_id, code_info.code_id);
 
-                let code = cache_reponse(cache_key, || {
+                let code = wasm_caching::maybe_cached_wasm(cache_key, || {
                     fork_state
                         .remote
                         .rt
                         .block_on(wasm_querier._code_data(code_info.code_id))
-                        .map_err(|e| e.into())
+                        .map_err(Into::into)
                 })?;
 
                 Ok(code)
@@ -185,9 +148,9 @@ impl WasmContract {
                     rt_handle: Some(fork_state.remote.rt.clone()),
                 };
 
-                let cache_key = format!("{}:{}", fork_state.remote.pub_address_prefix, &code_id);
+                let cache_key = format!("{}:{}", fork_state.remote.chain_id, &code_id);
 
-                let code = cache_reponse(cache_key, || {
+                let code = wasm_caching::maybe_cached_wasm(cache_key, || {
                     fork_state
                         .remote
                         .rt
@@ -475,5 +438,93 @@ pub fn execute_function<
                 .map_err(StdError::generic_err)?;
             Ok(WasmOutput::Sudo(result))
         }
+    }
+}
+
+mod wasm_caching {
+    use super::*;
+
+    use std::{env, fs, path::PathBuf};
+
+    use anyhow::{bail, Context};
+
+    const WASM_CACHE_DIR: &str = "wasm_cache";
+    const WASM_CACHE_ENV: &str = "WASM_CACHE";
+
+    static CARGO_TARGET_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+    pub(crate) fn cargo_target_dir() -> &'static PathBuf {
+        CARGO_TARGET_DIR.get_or_init(|| {
+            cargo_metadata::MetadataCommand::new()
+                .no_deps()
+                .exec()
+                .unwrap()
+                .target_directory
+                .into()
+        })
+    }
+
+    /// Returns wasm bytes for the contract
+    ///
+    /// Will get cached wasm stored in `CARGO_TARGET_DIR` (./target/ from project root by default)
+    /// This feature can be disabled by setting wasm cache environment variable to `false`: `WASM_CACHE=false`
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - A string key that represents unique id of the contract (usually chain-id:code_id)
+    /// * `wasm_code_bytes` - Function that returns non-cached version of the contract
+    ///
+    /// # Scenarios
+    ///
+    /// - Wasm caching disabled: return result of the `wasm_code_bytes` function
+    /// - Wasm file not found in cache location: return result of the `wasm_code_bytes` function, saving cache on on success
+    /// - Wasm stored in cache: return bytes
+    pub(crate) fn maybe_cached_wasm<F: Fn() -> AnyResult<Vec<u8>>>(
+        key: String,
+        wasm_code_bytes: F,
+    ) -> AnyResult<Vec<u8>> {
+        let wasm_cache_enabled = env::var(WASM_CACHE_ENV)
+            .ok()
+            .and_then(|wasm_cache| wasm_cache.parse().ok())
+            .unwrap_or(true);
+
+        // Wasm caching disabled, return function result
+        if !wasm_cache_enabled {
+            return wasm_code_bytes();
+        }
+
+        let wasm_cache_dir = cargo_target_dir().join(WASM_CACHE_DIR);
+        // Prepare cache directory in `./target/`
+        // TODO: does those checks and error messages help in any way? Won't default fs errors return same information?
+        match fs::metadata(&wasm_cache_dir) {
+            // Verify it's dir
+            Ok(wasm_cache_metadata) => {
+                if !wasm_cache_metadata.is_dir() {
+                    bail!("{WASM_CACHE_DIR} supposed to be directory")
+                }
+            }
+            // Error on checking cache dir, try to create it
+            Err(_) => fs::create_dir(&wasm_cache_dir)
+                .context("Wasm cache directory cannot be created, please check permissions")?,
+        }
+
+        let cached_wasm_file = wasm_cache_dir.join(format!("{key}.wasm"));
+        let wasm_bytes = match fs::metadata(&cached_wasm_file) {
+            // Cache file exists, just read it
+            Ok(_) => {
+                // TODO: do we need this check?
+                // assert!(wasm_file_metadata.is_file(), "it must be a file");
+                fs::read(&cached_wasm_file).context("unable to read wasm cache file")?
+            }
+            // Error on checking cache dir, download it and try to store it
+            Err(_) => {
+                let wasm = wasm_code_bytes()?;
+
+                // TODO: Not critical, should we just log the write failure?
+                fs::write(&cached_wasm_file, &wasm).context("unable to write wasm cache file")?;
+                wasm
+            }
+        };
+        Ok(wasm_bytes)
     }
 }
