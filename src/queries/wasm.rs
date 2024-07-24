@@ -15,20 +15,14 @@ pub struct WasmRemoteQuerier;
 
 impl WasmRemoteQuerier {
     pub fn code_info(remote: RemoteChannel, code_id: u64) -> AnyResult<CodeInfoResponse> {
-        let wasm_querier = CosmWasm {
-            channel: remote.channel,
-            rt_handle: Some(remote.rt.clone()),
-        };
+        let wasm_querier = CosmWasm::new_sync(remote.channel, &remote.rt);
 
         let code_info = remote.rt.block_on(wasm_querier._code(code_id))?;
         Ok(code_info)
     }
 
     pub fn load_distant_contract(remote: RemoteChannel, address: &Addr) -> AnyResult<ContractData> {
-        let wasm_querier = CosmWasm {
-            channel: remote.channel,
-            rt_handle: Some(remote.rt.clone()),
-        };
+        let wasm_querier = CosmWasm::new_sync(remote.channel, &remote.rt);
 
         let code_info = remote
             .rt
@@ -46,10 +40,7 @@ impl WasmRemoteQuerier {
         contract_addr: String,
         key: Binary,
     ) -> AnyResult<Vec<u8>> {
-        let wasm_querier = CosmWasm {
-            channel: remote.channel,
-            rt_handle: Some(remote.rt.clone()),
-        };
+        let wasm_querier = CosmWasm::new_sync(remote.channel, &remote.rt);
         let query_result = remote
             .rt
             .block_on(wasm_querier._contract_raw_state(contract_addr, key.to_vec()))

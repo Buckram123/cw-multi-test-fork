@@ -121,9 +121,9 @@ impl<
         self.staking = StakingQuerier::new(denom, validators, delegations);
     }
 
-    pub fn with_custom_handler<CH: 'static>(mut self, handler: CH) -> Self
+    pub fn with_custom_handler<CH>(mut self, handler: CH) -> Self
     where
-        CH: Fn(&QueryC) -> QueryResultWithGas,
+        CH: Fn(&QueryC) -> QueryResultWithGas + 'static,
     {
         self.custom_handler = Box::from(handler);
         self

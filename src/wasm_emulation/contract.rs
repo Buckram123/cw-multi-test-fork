@@ -120,10 +120,8 @@ impl WasmContract {
         match self {
             WasmContract::Local(LocalWasmContract { code, .. }) => Ok(code.clone()),
             WasmContract::DistantContract(DistantContract { contract_addr }) => {
-                let wasm_querier = CosmWasm {
-                    channel: fork_state.remote.channel.clone(),
-                    rt_handle: Some(fork_state.remote.rt.clone()),
-                };
+                let wasm_querier =
+                    CosmWasm::new_sync(fork_state.remote.channel.clone(), &fork_state.remote.rt);
 
                 let code_info = fork_state
                     .remote
@@ -136,10 +134,8 @@ impl WasmContract {
                 Ok(code)
             }
             WasmContract::DistantCodeId(DistantCodeId { code_id }) => {
-                let wasm_querier = CosmWasm {
-                    channel: fork_state.remote.channel.clone(),
-                    rt_handle: Some(fork_state.remote.rt.clone()),
-                };
+                let wasm_querier =
+                    CosmWasm::new_sync(fork_state.remote.channel.clone(), &fork_state.remote.rt);
 
                 let code = fork_state
                     .remote

@@ -109,10 +109,7 @@ impl Storage for DualStorage {
         // If it's not available, we query it online if it was not removed locally
         if !self.removed_keys.contains(key) && value.as_ref().unwrap().is_none() {
             log::debug!(target: CLONE_TESTING_STORAGE_LOG, "Value not set locally, fetching remote key");
-            let wasm_querier = CosmWasm {
-                channel: self.remote.channel.clone(),
-                rt_handle: Some(self.remote.rt.clone()),
-            };
+            let wasm_querier = CosmWasm::new_sync(self.remote.channel.clone(), &self.remote.rt);
 
             let distant_result = self.remote.rt.block_on(
                 wasm_querier._contract_raw_state(self.contract_addr.clone(), key.to_vec()),
@@ -200,10 +197,7 @@ impl Storage for DualStorage {
         if iterator.distant_iter.position == iterator.distant_iter.data.len()
             && iterator.distant_iter.key.is_some()
         {
-            let wasm_querier = CosmWasm {
-                channel: self.remote.channel.clone(),
-                rt_handle: Some(self.remote.rt.clone()),
-            };
+            let wasm_querier = CosmWasm::new_sync(self.remote.channel.clone(), &self.remote.rt);
             let new_keys = self
                 .remote
                 .rt
