@@ -138,10 +138,10 @@ impl StorageAnalyzer {
     }
 
     pub fn compare_all_readable_contract_storage(&self) {
-        let wasm_querier = cw_orch::daemon::queriers::CosmWasm {
-            channel: self.remote.channel.clone(),
-            rt_handle: Some(self.remote.rt.clone()),
-        };
+        let wasm_querier = cw_orch::daemon::queriers::CosmWasm::new_sync(
+            self.remote.channel.clone(),
+            &self.remote.rt,
+        );
         self.all_contract_storage()
             .into_iter()
             .for_each(|(contract_addr, key, value)| {

@@ -64,10 +64,10 @@ impl<'i> Iterator for Iter<'i> {
             && (self.distant_iter.position == 0
                 || !self.distant_iter.key.clone().unwrap().is_empty())
         {
-            let wasm_querier = CosmWasm {
-                channel: self.distant_iter.remote.channel.clone(),
-                rt_handle: Some(self.distant_iter.remote.rt.clone()),
-            };
+            let wasm_querier = CosmWasm::new_sync(
+                self.distant_iter.remote.channel.clone(),
+                &self.distant_iter.remote.rt,
+            );
             let new_keys = self
                 .distant_iter
                 .remote
@@ -160,10 +160,7 @@ impl<'a> Storage for DualStorage<'a> {
         let mut value = self.local_storage.get(key);
         // If it's not available, we query it online if it was not removed locally
         if !self.removed_keys.contains(key) && value.as_ref().is_none() {
-            let wasm_querier = CosmWasm {
-                channel: self.remote.channel.clone(),
-                rt_handle: Some(self.remote.rt.clone()),
-            };
+            let wasm_querier = CosmWasm::new_sync(self.remote.channel.clone(), &self.remote.rt);
 
             let distant_result = self.remote.rt.block_on(
                 wasm_querier._contract_raw_state(self.contract_addr.clone(), key.to_vec()),
