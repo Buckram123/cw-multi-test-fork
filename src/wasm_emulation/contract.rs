@@ -598,27 +598,26 @@ mod wasm_caching {
         wasm_code_bytes: F,
         cached_wasm_file: &PathBuf,
     ) -> Result<Vec<u8>, anyhow::Error> {
-        let wasm = wasm_code_bytes()?;
         let options = file_lock::FileOptions::new().create(true).write(true);
-        if let Err(cache_save_err) = file_lock::FileLock::lock(cached_wasm_file, false, options)
-            .and_then(|file_lock| {
-                // Set writing status
-                WasmCachingStatus::Writing.set_status(&file_lock.file);
+        let file_lock_status = file_lock::FileLock::lock(cached_wasm_file, false, options);
+        let wasm = wasm_code_bytes()?;
+        if let Err(cache_save_err) = file_lock_status.and_then(|file_lock| {
+            // Set writing status
+            WasmCachingStatus::Writing.set_status(&file_lock.file);
 
-                match file_lock.file.write_all_at(&wasm, 1) {
-                    // Done writing, set ready status
-                    Ok(()) => {
-                        WasmCachingStatus::Ready.set_status(&file_lock.file);
-                        Ok(())
-                    }
-                    // Failed to write, set corrupted status
-                    Err(e) => {
-                        WasmCachingStatus::Corrupted.set_status(&file_lock.file);
-                        Err(e)
-                    }
+            match file_lock.file.write_all_at(&wasm, 1) {
+                // Done writing, set ready status
+                Ok(()) => {
+                    WasmCachingStatus::Ready.set_status(&file_lock.file);
+                    Ok(())
                 }
-            })
-        {
+                // Failed to write, set corrupted status
+                Err(e) => {
+                    WasmCachingStatus::Corrupted.set_status(&file_lock.file);
+                    Err(e)
+                }
+            }
+        }) {
             // It's not critical if it fails, as we already have wasm bytes, so we just log it
             log::error!(target: "wasm_caching", "Failed to save wasm cache: {cache_save_err}")
         }
